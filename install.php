@@ -149,7 +149,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && !$isLocked) {
                         tenggat_waktu DATE DEFAULT NULL,
                         created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
                         FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE
-                    ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci
+                    ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
                 ",
                 'riwayat_tabungan' => "
                     CREATE TABLE IF NOT EXISTS riwayat_tabungan (
@@ -157,6 +157,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && !$isLocked) {
                         user_id INT NOT NULL,
                         target_id INT NOT NULL,
                         dompet_id INT NULL,
+                        jenis ENUM('setor', 'tarik') NOT NULL DEFAULT 'setor',
                         nominal DECIMAL(15,2) NOT NULL,
                         tanggal DATE NOT NULL,
                         keterangan VARCHAR(255) DEFAULT NULL,
@@ -165,7 +166,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && !$isLocked) {
                         FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE,
                         FOREIGN KEY (target_id) REFERENCES target_tabungan(id) ON DELETE CASCADE,
                         FOREIGN KEY (dompet_id) REFERENCES dompet(id) ON DELETE SET NULL
-                    ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci
+                    ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
                 ",
                 'riwayat_transfer' => "
                     CREATE TABLE IF NOT EXISTS riwayat_transfer (
