@@ -22,9 +22,9 @@ header('Referrer-Policy: strict-origin-when-cross-origin');
 
 // Konfigurasi Database MySQL (Dihasilkan otomatis oleh install.php)
 $dbHost = 'localhost';
-$dbName = 'dompetdigital';
-$dbUser = 'dompetdigit_usr';
-$dbPass = '8-}ZU>$1R#>+iXeM';
+$dbName = '';
+$dbUser = '';
+$dbPass = '';
 
 try {
     $pdo = new PDO(
