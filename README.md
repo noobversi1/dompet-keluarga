@@ -82,7 +82,7 @@ dompet-keluarga/
 
 1. **Clone Repositori**
    ```bash
-   git clone [https://github.com/noobversi1/dompet-keluarga.git](https://github.com/noobversi1/dompet-keluarga.git)
+   git clone [https://github.com/noobversi1/Dompet-Keluarga.git](https://github.com/noobversi1/Dompet-Keluarga.git)
    cd dompet-keluarga
    ```
 
