@@ -8,16 +8,17 @@ require_once 'layout.php';
 $userId = requireLogin();
 
 // Parameter Filter & Pagination Target Tabungan
-$statusTarget = in_array($_GET['status_target'] ?? '', ['berjalan', 'tercapai'], true) ? $_GET['status_target'] : '';
-$qTarget      = trim($_GET['q_target'] ?? '');
-$pageTarget   = max(1, (int)($_GET['page_target'] ?? 1));
+$statusTarget  = in_array($_GET['status_target'] ?? '', ['berjalan', 'tercapai'], true) ? $_GET['status_target'] : '';
+$qTarget       = trim($_GET['q_target'] ?? '');
+$pageTarget    = max(1, (int)($_GET['page_target'] ?? 1));
 $perPageTarget = 4; // 4 kartu (2x2 grid) per halaman
 
-// Parameter Filter & Pagination Riwayat Alokasi
-$filterTarget  = max(0, (int)($_GET['target_id'] ?? 0));
-$filterDompet  = max(0, (int)($_GET['dompet_id'] ?? 0));
-$bulanRiwayat  = preg_match('/^\d{4}-\d{2}$/', $_GET['bulan_riwayat'] ?? '') ? $_GET['bulan_riwayat'] : '';
-$pageRiwayat   = max(1, (int)($_GET['page_riwayat'] ?? 1));
+// Parameter Filter & Pagination Riwayat Alokasi & Penarikan
+$filterTarget   = max(0, (int)($_GET['target_id'] ?? 0));
+$filterDompet   = max(0, (int)($_GET['dompet_id'] ?? 0));
+$filterJenis    = in_array($_GET['jenis_riwayat'] ?? '', ['setor', 'tarik'], true) ? $_GET['jenis_riwayat'] : '';
+$bulanRiwayat   = preg_match('/^\d{4}-\d{2}$/', $_GET['bulan_riwayat'] ?? '') ? $_GET['bulan_riwayat'] : '';
+$pageRiwayat    = max(1, (int)($_GET['page_riwayat'] ?? 1));
 $perPageRiwayat = 10;
 
 $baseParams = [
@@ -26,6 +27,7 @@ $baseParams = [
     'page_target'   => $pageTarget,
     'target_id'     => $filterTarget,
     'dompet_id'     => $filterDompet,
+    'jenis_riwayat' => $filterJenis,
     'bulan_riwayat' => $bulanRiwayat,
     'page_riwayat'  => $pageRiwayat,
 ];
@@ -41,6 +43,7 @@ function buildTabunganUrl(array $base, array $overrides = []): string
 
     if (($merged['target_id'] ?? 0) > 0) $clean['target_id'] = (int)$merged['target_id'];
     if (($merged['dompet_id'] ?? 0) > 0) $clean['dompet_id'] = (int)$merged['dompet_id'];
+    if (($merged['jenis_riwayat'] ?? '') !== '') $clean['jenis_riwayat'] = $merged['jenis_riwayat'];
     if (($merged['bulan_riwayat'] ?? '') !== '') $clean['bulan_riwayat'] = $merged['bulan_riwayat'];
     if (($merged['page_riwayat'] ?? 1) > 1) $clean['page_riwayat'] = (int)$merged['page_riwayat'];
 
@@ -87,7 +90,9 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
     $aksi        = $_POST['aksi'] ?? '';
     $redirectUrl = buildTabunganUrl($baseParams);
 
-    // 1. Buat Target Tabungan Baru
+    // =====================================================================
+    // 1. BUAT TARGET TABUNGAN BARU
+    // =====================================================================
     if ($aksi === 'buat_target') {
         $namaTarget = trim($_POST['nama_target'] ?? '');
         $targetDana = (float)($_POST['target_dana'] ?? 0);
@@ -110,7 +115,9 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
         exit;
     }
 
-    // 2. Edit Target Tabungan
+    // =====================================================================
+    // 2. EDIT TARGET TABUNGAN
+    // =====================================================================
     if ($aksi === 'edit_target') {
         $targetId   = (int)($_POST['target_id'] ?? 0);
         $namaTarget = trim($_POST['nama_target'] ?? '');
@@ -136,7 +143,9 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
         exit;
     }
 
-    // 3. Hapus Target Tabungan
+    // =====================================================================
+    // 3. HAPUS TARGET TABUNGAN
+    // =====================================================================
     if ($aksi === 'hapus_target') {
         $targetId        = (int)($_POST['target_id'] ?? 0);
         $dompetKembaliId = (int)($_POST['dompet_kembali_id'] ?? 0);
@@ -178,7 +187,9 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
         exit;
     }
 
-    // 4. Alokasikan Dana (Setor ke Target Tabungan)
+    // =====================================================================
+    // 4. ALOKASIKAN DANA (SETOR KE TARGET TABUNGAN)
+    // =====================================================================
     if ($aksi === 'setor_dana') {
         $targetId   = (int)($_POST['target_id'] ?? 0);
         $dompetId   = (int)($_POST['dompet_id'] ?? 0);
@@ -186,41 +197,108 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
         $tanggal    = $_POST['tanggal'] ?? date('Y-m-d');
         $keterangan = trim($_POST['keterangan'] ?? '');
 
-        $cekTarget = $pdo->prepare('SELECT id FROM target_tabungan WHERE id = ? AND user_id = ?');
-        $cekTarget->execute([$targetId, $userId]);
+        if ($targetId <= 0 || $dompetId <= 0 || $nominal <= 0 || !preg_match('/^\d{4}-\d{2}-\d{2}$/', $tanggal)) {
+            setFlash('danger', 'Input alokasi tabungan tidak valid.');
+            header('Location: ' . $redirectUrl);
+            exit;
+        }
 
-        $cekDompet = $pdo->prepare('SELECT id, saldo FROM dompet WHERE id = ? AND user_id = ?');
-        $cekDompet->execute([$dompetId, $userId]);
-        $dompet = $cekDompet->fetch();
+        $pdo->beginTransaction();
+        try {
+            $cekTarget = $pdo->prepare('SELECT id FROM target_tabungan WHERE id = ? AND user_id = ? FOR UPDATE');
+            $cekTarget->execute([$targetId, $userId]);
 
-        if ($cekTarget->fetch() && $dompet && $nominal > 0 && (float)$dompet['saldo'] >= $nominal && preg_match('/^\d{4}-\d{2}-\d{2}$/', $tanggal)) {
-            $pdo->beginTransaction();
-            try {
+            $cekDompet = $pdo->prepare('SELECT id, saldo FROM dompet WHERE id = ? AND user_id = ? FOR UPDATE');
+            $cekDompet->execute([$dompetId, $userId]);
+            $dompet = $cekDompet->fetch();
+
+            if (!$cekTarget->fetch() || !$dompet) {
+                $pdo->rollBack();
+                setFlash('danger', 'Target tabungan atau dompet tidak ditemukan.');
+            } elseif ((float)$dompet['saldo'] < $nominal) {
+                $pdo->rollBack();
+                setFlash('danger', 'Saldo dompet tidak mencukupi untuk alokasi tabungan.');
+            } else {
                 $pdo->prepare('UPDATE dompet SET saldo = saldo - ? WHERE id = ? AND user_id = ?')
                     ->execute([$nominal, $dompetId, $userId]);
 
                 $pdo->prepare('UPDATE target_tabungan SET dana_terkumpul = dana_terkumpul + ? WHERE id = ? AND user_id = ?')
                     ->execute([$nominal, $targetId, $userId]);
 
-                $pdo->prepare('INSERT INTO riwayat_tabungan (user_id, target_id, dompet_id, nominal, tanggal, keterangan) VALUES (?, ?, ?, ?, ?, ?)')
-                    ->execute([$userId, $targetId, $dompetId, $nominal, $tanggal, $keterangan]);
+                $pdo->prepare('INSERT INTO riwayat_tabungan (user_id, target_id, dompet_id, jenis, nominal, tanggal, keterangan) VALUES (?, ?, ?, ?, ?, ?, ?)')
+                    ->execute([$userId, $targetId, $dompetId, 'setor', $nominal, $tanggal, $keterangan]);
 
                 $pdo->commit();
-                setFlash('success', 'Dana berhasil dialokasikan ke target tabungan.');
+                setFlash('success', 'Dana sebesar ' . rupiah($nominal) . ' berhasil dialokasikan ke target tabungan.');
                 header('Location: ' . buildTabunganUrl($baseParams, ['page_riwayat' => 1]));
                 exit;
-            } catch (Exception $e) {
-                $pdo->rollBack();
-                setFlash('danger', 'Gagal mengalokasikan dana tabungan.');
             }
-        } else {
-            setFlash('danger', 'Saldo dompet tidak mencukupi atau input alokasi tidak valid.');
+        } catch (Exception $e) {
+            $pdo->rollBack();
+            setFlash('danger', 'Gagal mengalokasikan dana tabungan.');
         }
         header('Location: ' . $redirectUrl);
         exit;
     }
 
-    // 5. Edit Alokasi Tabungan
+    // =====================================================================
+    // 5. TARIK DANA DARI TARGET TABUNGAN KE DOMPET
+    // =====================================================================
+    if ($aksi === 'tarik_dana') {
+        $targetId   = (int)($_POST['target_id'] ?? 0);
+        $dompetId   = (int)($_POST['dompet_id'] ?? 0);
+        $nominal    = (float)($_POST['nominal'] ?? 0);
+        $tanggal    = $_POST['tanggal'] ?? date('Y-m-d');
+        $keterangan = trim($_POST['keterangan'] ?? '');
+
+        if ($targetId <= 0 || $dompetId <= 0 || $nominal <= 0 || !preg_match('/^\d{4}-\d{2}-\d{2}$/', $tanggal)) {
+            setFlash('danger', 'Input penarikan dana tabungan tidak valid.');
+            header('Location: ' . $redirectUrl);
+            exit;
+        }
+
+        $pdo->beginTransaction();
+        try {
+            $stmtTarget = $pdo->prepare('SELECT id, nama_target, dana_terkumpul FROM target_tabungan WHERE id = ? AND user_id = ? FOR UPDATE');
+            $stmtTarget->execute([$targetId, $userId]);
+            $target = $stmtTarget->fetch();
+
+            $stmtDompet = $pdo->prepare('SELECT id, nama_dompet FROM dompet WHERE id = ? AND user_id = ? FOR UPDATE');
+            $stmtDompet->execute([$dompetId, $userId]);
+            $dompet = $stmtDompet->fetch();
+
+            if (!$target || !$dompet) {
+                $pdo->rollBack();
+                setFlash('danger', 'Target tabungan atau dompet tujuan tidak ditemukan.');
+            } elseif ((float)$target['dana_terkumpul'] < $nominal) {
+                $pdo->rollBack();
+                setFlash('danger', 'Dana terkumpul pada tabungan tidak mencukupi (tersedia: ' . rupiah($target['dana_terkumpul']) . ').');
+            } else {
+                $pdo->prepare('UPDATE target_tabungan SET dana_terkumpul = dana_terkumpul - ? WHERE id = ? AND user_id = ?')
+                    ->execute([$nominal, $targetId, $userId]);
+
+                $pdo->prepare('UPDATE dompet SET saldo = saldo + ? WHERE id = ? AND user_id = ?')
+                    ->execute([$nominal, $dompetId, $userId]);
+
+                $pdo->prepare('INSERT INTO riwayat_tabungan (user_id, target_id, dompet_id, jenis, nominal, tanggal, keterangan) VALUES (?, ?, ?, ?, ?, ?, ?)')
+                    ->execute([$userId, $targetId, $dompetId, 'tarik', $nominal, $tanggal, $keterangan ?: 'Penarikan dana tabungan']);
+
+                $pdo->commit();
+                setFlash('success', 'Penarikan dana sebesar ' . rupiah($nominal) . ' berhasil ditransfer ke ' . $dompet['nama_dompet'] . '.');
+                header('Location: ' . buildTabunganUrl($baseParams, ['page_riwayat' => 1]));
+                exit;
+            }
+        } catch (Exception $e) {
+            $pdo->rollBack();
+            setFlash('danger', 'Gagal memproses penarikan dana tabungan.');
+        }
+        header('Location: ' . $redirectUrl);
+        exit;
+    }
+
+    // =====================================================================
+    // 6. EDIT RIWAYAT ALOKASI / PENARIKAN TABUNGAN
+    // =====================================================================
     if ($aksi === 'edit_setoran') {
         $setoranId  = (int)($_POST['setoran_id'] ?? 0);
         $dompetId   = (int)($_POST['dompet_id'] ?? 0);
@@ -228,30 +306,85 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
         $tanggal    = $_POST['tanggal'] ?? '';
         $keterangan = trim($_POST['keterangan'] ?? '');
 
-        $stmtOld = $pdo->prepare('SELECT id, target_id, dompet_id, nominal FROM riwayat_tabungan WHERE id = ? AND user_id = ?');
-        $stmtOld->execute([$setoranId, $userId]);
-        $oldSetoran = $stmtOld->fetch();
+        if ($setoranId <= 0 || $dompetId <= 0 || $nominal <= 0 || !preg_match('/^\d{4}-\d{2}-\d{2}$/', $tanggal)) {
+            setFlash('danger', 'Data pembaruan riwayat tabungan tidak valid.');
+            header('Location: ' . $redirectUrl);
+            exit;
+        }
 
-        $cekDompet = $pdo->prepare('SELECT id FROM dompet WHERE id = ? AND user_id = ?');
-        $cekDompet->execute([$dompetId, $userId]);
+        $pdo->beginTransaction();
+        try {
+            $stmtOld = $pdo->prepare('SELECT id, target_id, dompet_id, jenis, nominal FROM riwayat_tabungan WHERE id = ? AND user_id = ? FOR UPDATE');
+            $stmtOld->execute([$setoranId, $userId]);
+            $oldItem = $stmtOld->fetch();
 
-        if ($oldSetoran && $cekDompet->fetch() && $nominal > 0 && preg_match('/^\d{4}-\d{2}-\d{2}$/', $tanggal)) {
-            $pdo->beginTransaction();
-            try {
-                if (!empty($oldSetoran['dompet_id'])) {
+            $cekDompet = $pdo->prepare('SELECT id FROM dompet WHERE id = ? AND user_id = ? FOR UPDATE');
+            $cekDompet->execute([$dompetId, $userId]);
+
+            if (!$oldItem || !$cekDompet->fetch()) {
+                $pdo->rollBack();
+                setFlash('danger', 'Data riwayat atau dompet tidak ditemukan.');
+                header('Location: ' . $redirectUrl);
+                exit;
+            }
+
+            $jenisItem = $oldItem['jenis'] ?? 'setor';
+
+            if ($jenisItem === 'tarik') {
+                // 1. Batalkan penarikan lama: tarik kembali dari dompet lama, kembalikan ke target tabungan
+                if (!empty($oldItem['dompet_id'])) {
+                    $stmtCekDompetLama = $pdo->prepare('SELECT saldo FROM dompet WHERE id = ? AND user_id = ? FOR UPDATE');
+                    $stmtCekDompetLama->execute([$oldItem['dompet_id'], $userId]);
+                    $saldoDompetLama = $stmtCekDompetLama->fetchColumn();
+
+                    if ($saldoDompetLama !== false && (float)$saldoDompetLama < (float)$oldItem['nominal']) {
+                        $pdo->rollBack();
+                        setFlash('danger', 'Riwayat penarikan tidak dapat diubah karena saldo di dompet tujuan lama sudah terpakai.');
+                        header('Location: ' . $redirectUrl);
+                        exit;
+                    }
+
+                    $pdo->prepare('UPDATE dompet SET saldo = saldo - ? WHERE id = ? AND user_id = ?')
+                        ->execute([$oldItem['nominal'], $oldItem['dompet_id'], $userId]);
+                }
+
+                $pdo->prepare('UPDATE target_tabungan SET dana_terkumpul = dana_terkumpul + ? WHERE id = ? AND user_id = ?')
+                    ->execute([$oldItem['nominal'], $oldItem['target_id'], $userId]);
+
+                // 2. Terapkan penarikan baru
+                $stmtTargetNow = $pdo->prepare('SELECT dana_terkumpul FROM target_tabungan WHERE id = ? AND user_id = ? FOR UPDATE');
+                $stmtTargetNow->execute([$oldItem['target_id'], $userId]);
+                $danaTersedia = (float)$stmtTargetNow->fetchColumn();
+
+                if ($danaTersedia < $nominal) {
+                    $pdo->rollBack();
+                    setFlash('danger', 'Dana terkumpul pada tabungan tidak mencukupi untuk nominal penarikan baru.');
+                    header('Location: ' . $redirectUrl);
+                    exit;
+                }
+
+                $pdo->prepare('UPDATE target_tabungan SET dana_terkumpul = dana_terkumpul - ? WHERE id = ? AND user_id = ?')
+                    ->execute([$nominal, $oldItem['target_id'], $userId]);
+
+                $pdo->prepare('UPDATE dompet SET saldo = saldo + ? WHERE id = ? AND user_id = ?')
+                    ->execute([$nominal, $dompetId, $userId]);
+            } else {
+                // 1. Batalkan setoran lama: kembalikan ke dompet lama, kurangi target tabungan
+                if (!empty($oldItem['dompet_id'])) {
                     $pdo->prepare('UPDATE dompet SET saldo = saldo + ? WHERE id = ? AND user_id = ?')
-                        ->execute([$oldSetoran['nominal'], $oldSetoran['dompet_id'], $userId]);
+                        ->execute([$oldItem['nominal'], $oldItem['dompet_id'], $userId]);
                 }
                 $pdo->prepare('UPDATE target_tabungan SET dana_terkumpul = GREATEST(0, dana_terkumpul - ?) WHERE id = ? AND user_id = ?')
-                    ->execute([$oldSetoran['nominal'], $oldSetoran['target_id'], $userId]);
+                    ->execute([$oldItem['nominal'], $oldItem['target_id'], $userId]);
 
+                // 2. Terapkan setoran baru
                 $stmtSaldoBaru = $pdo->prepare('SELECT saldo FROM dompet WHERE id = ? AND user_id = ? FOR UPDATE');
                 $stmtSaldoBaru->execute([$dompetId, $userId]);
                 $saldoBaru = (float)$stmtSaldoBaru->fetchColumn();
 
                 if ($saldoBaru < $nominal) {
                     $pdo->rollBack();
-                    setFlash('danger', 'Saldo dompet tujuan tidak mencukupi untuk nominal baru.');
+                    setFlash('danger', 'Saldo dompet asal tidak mencukupi untuk nominal alokasi baru.');
                     header('Location: ' . $redirectUrl);
                     exit;
                 }
@@ -260,57 +393,89 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
                     ->execute([$nominal, $dompetId, $userId]);
 
                 $pdo->prepare('UPDATE target_tabungan SET dana_terkumpul = dana_terkumpul + ? WHERE id = ? AND user_id = ?')
-                    ->execute([$nominal, $oldSetoran['target_id'], $userId]);
-
-                $pdo->prepare('
-                    UPDATE riwayat_tabungan
-                    SET dompet_id = ?, nominal = ?, tanggal = ?, keterangan = ?
-                    WHERE id = ? AND user_id = ?
-                ')->execute([$dompetId, $nominal, $tanggal, $keterangan, $setoranId, $userId]);
-
-                $pdo->commit();
-                setFlash('success', 'Riwayat alokasi tabungan berhasil diperbarui dan saldo disesuaikan.');
-            } catch (Exception $e) {
-                $pdo->rollBack();
-                setFlash('danger', 'Gagal memperbarui alokasi tabungan.');
+                    ->execute([$nominal, $oldItem['target_id'], $userId]);
             }
-        } else {
-            setFlash('danger', 'Data pembaruan alokasi tidak valid.');
+
+            $pdo->prepare('
+                UPDATE riwayat_tabungan
+                SET dompet_id = ?, nominal = ?, tanggal = ?, keterangan = ?
+                WHERE id = ? AND user_id = ?
+            ')->execute([$dompetId, $nominal, $tanggal, $keterangan, $setoranId, $userId]);
+
+            $pdo->commit();
+            setFlash('success', 'Riwayat transaksi tabungan berhasil diperbarui dan saldo telah disesuaikan.');
+        } catch (Exception $e) {
+            $pdo->rollBack();
+            setFlash('danger', 'Gagal memperbarui riwayat tabungan.');
         }
         header('Location: ' . $redirectUrl);
         exit;
     }
 
-    // 6. Hapus Alokasi Tabungan
+    // =====================================================================
+    // 7. HAPUS / BATALKAN RIWAYAT ALOKASI ATAU PENARIKAN TABUNGAN
+    // =====================================================================
     if ($aksi === 'hapus_setoran') {
         $setoranId = (int)($_POST['setoran_id'] ?? 0);
 
-        $stmtGet = $pdo->prepare('SELECT id, target_id, dompet_id, nominal FROM riwayat_tabungan WHERE id = ? AND user_id = ?');
-        $stmtGet->execute([$setoranId, $userId]);
-        $setoran = $stmtGet->fetch();
+        $pdo->beginTransaction();
+        try {
+            $stmtGet = $pdo->prepare('SELECT id, target_id, dompet_id, jenis, nominal FROM riwayat_tabungan WHERE id = ? AND user_id = ? FOR UPDATE');
+            $stmtGet->execute([$setoranId, $userId]);
+            $item = $stmtGet->fetch();
 
-        if ($setoran) {
-            $pdo->beginTransaction();
-            try {
-                if (!empty($setoran['dompet_id'])) {
+            if (!$item) {
+                $pdo->rollBack();
+                setFlash('danger', 'Data riwayat tabungan tidak ditemukan.');
+                header('Location: ' . $redirectUrl);
+                exit;
+            }
+
+            $jenisItem = $item['jenis'] ?? 'setor';
+
+            if ($jenisItem === 'tarik') {
+                // Batalkan penarikan: kurangi dompet tujuan, kembalikan ke target tabungan
+                if (!empty($item['dompet_id'])) {
+                    $stmtCekDompet = $pdo->prepare('SELECT saldo FROM dompet WHERE id = ? AND user_id = ? FOR UPDATE');
+                    $stmtCekDompet->execute([$item['dompet_id'], $userId]);
+                    $saldoDompet = $stmtCekDompet->fetchColumn();
+
+                    if ($saldoDompet !== false && (float)$saldoDompet < (float)$item['nominal']) {
+                        $pdo->rollBack();
+                        setFlash('danger', 'Riwayat penarikan tidak dapat dihapus karena saldo di dompet penerima sudah terpakai.');
+                        header('Location: ' . $redirectUrl);
+                        exit;
+                    }
+
+                    $pdo->prepare('UPDATE dompet SET saldo = saldo - ? WHERE id = ? AND user_id = ?')
+                        ->execute([$item['nominal'], $item['dompet_id'], $userId]);
+                }
+
+                $pdo->prepare('UPDATE target_tabungan SET dana_terkumpul = dana_terkumpul + ? WHERE id = ? AND user_id = ?')
+                    ->execute([$item['nominal'], $item['target_id'], $userId]);
+
+                $pesanSukses = 'Penarikan tabungan dibatalkan dan dana dikembalikan ke target tabungan.';
+            } else {
+                // Batalkan setoran: kembalikan ke dompet asal, kurangi target tabungan
+                if (!empty($item['dompet_id'])) {
                     $pdo->prepare('UPDATE dompet SET saldo = saldo + ? WHERE id = ? AND user_id = ?')
-                        ->execute([$setoran['nominal'], $setoran['dompet_id'], $userId]);
+                        ->execute([$item['nominal'], $item['dompet_id'], $userId]);
                 }
 
                 $pdo->prepare('UPDATE target_tabungan SET dana_terkumpul = GREATEST(0, dana_terkumpul - ?) WHERE id = ? AND user_id = ?')
-                    ->execute([$setoran['nominal'], $setoran['target_id'], $userId]);
+                    ->execute([$item['nominal'], $item['target_id'], $userId]);
 
-                $pdo->prepare('DELETE FROM riwayat_tabungan WHERE id = ? AND user_id = ?')
-                    ->execute([$setoranId, $userId]);
-
-                $pdo->commit();
-                setFlash('success', 'Alokasi tabungan berhasil dibatalkan dan dana dikembalikan ke saldo dompet.');
-            } catch (Exception $e) {
-                $pdo->rollBack();
-                setFlash('danger', 'Gagal menghapus alokasi tabungan.');
+                $pesanSukses = 'Alokasi tabungan berhasil dibatalkan dan dana dikembalikan ke saldo dompet.';
             }
-        } else {
-            setFlash('danger', 'Data alokasi tabungan tidak ditemukan.');
+
+            $pdo->prepare('DELETE FROM riwayat_tabungan WHERE id = ? AND user_id = ?')
+                ->execute([$setoranId, $userId]);
+
+            $pdo->commit();
+            setFlash('success', $pesanSukses);
+        } catch (Exception $e) {
+            $pdo->rollBack();
+            setFlash('danger', 'Gagal menghapus riwayat tabungan.');
         }
         header('Location: ' . $redirectUrl);
         exit;
@@ -378,7 +543,7 @@ $stmtTargets->execute();
 $targets = $stmtTargets->fetchAll();
 
 // =========================================================================
-// QUERY 2: RIWAYAT ALOKASI TABUNGAN (FILTER + PAGINATION)
+// QUERY 2: RIWAYAT ALOKASI & PENARIKAN TABUNGAN (FILTER + PAGINATION)
 // =========================================================================
 $whereRiwayat  = ['r.user_id = ?'];
 $paramsRiwayat = [$userId];
@@ -391,6 +556,10 @@ if ($filterDompet > 0) {
     $whereRiwayat[]  = 'r.dompet_id = ?';
     $paramsRiwayat[] = $filterDompet;
 }
+if ($filterJenis !== '') {
+    $whereRiwayat[]  = 'r.jenis = ?';
+    $paramsRiwayat[] = $filterJenis;
+}
 if ($bulanRiwayat !== '') {
     $whereRiwayat[]  = "DATE_FORMAT(r.tanggal, '%Y-%m') = ?";
     $paramsRiwayat[] = $bulanRiwayat;
@@ -398,7 +567,10 @@ if ($bulanRiwayat !== '') {
 $sqlWhereRiwayat = implode(' AND ', $whereRiwayat);
 
 $stmtStatsRiwayat = $pdo->prepare("
-    SELECT COUNT(*) AS cnt, COALESCE(SUM(r.nominal), 0) AS total_setor
+    SELECT
+        COUNT(*) AS cnt,
+        COALESCE(SUM(CASE WHEN r.jenis = 'setor' THEN r.nominal ELSE 0 END), 0) AS total_setor,
+        COALESCE(SUM(CASE WHEN r.jenis = 'tarik' THEN r.nominal ELSE 0 END), 0) AS total_tarik
     FROM riwayat_tabungan r
     WHERE {$sqlWhereRiwayat}
 ");
@@ -406,6 +578,7 @@ $stmtStatsRiwayat->execute($paramsRiwayat);
 $statsRiwayat      = $stmtStatsRiwayat->fetch();
 $totalRowsRiwayat  = (int)($statsRiwayat['cnt'] ?? 0);
 $totalSetorRiwayat = (float)($statsRiwayat['total_setor'] ?? 0);
+$totalTarikRiwayat = (float)($statsRiwayat['total_tarik'] ?? 0);
 $totalPagesRiwayat = max(1, (int)ceil($totalRowsRiwayat / $perPageRiwayat));
 if ($pageRiwayat > $totalPagesRiwayat) $pageRiwayat = $totalPagesRiwayat;
 $offsetRiwayat = ($pageRiwayat - 1) * $perPageRiwayat;
@@ -429,7 +602,7 @@ $stmtRiwayat->execute();
 $riwayatSetoran = $stmtRiwayat->fetchAll();
 
 $isTargetFiltered  = ($statusTarget !== '' || $qTarget !== '');
-$isRiwayatFiltered = ($filterTarget > 0 || $filterDompet > 0 || $bulanRiwayat !== '');
+$isRiwayatFiltered = ($filterTarget > 0 || $filterDompet > 0 || $filterJenis !== '' || $bulanRiwayat !== '');
 
 renderHeader('Target Tabungan Keluarga', 'tabungan');
 ?>
@@ -478,7 +651,7 @@ renderHeader('Target Tabungan Keluarga', 'tabungan');
         </div>
     </div>
 
-    <!-- KOLOM KANAN: KARTU TARGET & RIWAYAT ALOKASI -->
+    <!-- KOLOM KANAN: KARTU TARGET & RIWAYAT ALOKASI / PENARIKAN -->
     <div class="col-lg-8">
         <!-- Bilah Filter Target Tabungan -->
         <div class="card border-0 shadow-sm mb-3">
@@ -486,6 +659,7 @@ renderHeader('Target Tabungan Keluarga', 'tabungan');
                 <form method="GET" class="row g-2 align-items-center">
                     <input type="hidden" name="target_id" value="<?= $filterTarget ?>">
                     <input type="hidden" name="dompet_id" value="<?= $filterDompet ?>">
+                    <input type="hidden" name="jenis_riwayat" value="<?= e($filterJenis) ?>">
                     <input type="hidden" name="bulan_riwayat" value="<?= e($bulanRiwayat) ?>">
                     <input type="hidden" name="page_riwayat" value="<?= $pageRiwayat ?>">
 
@@ -519,7 +693,8 @@ renderHeader('Target Tabungan Keluarga', 'tabungan');
                 </div>
             <?php else: ?>
                 <?php foreach ($targets as $tg):
-                    $persen = $tg['target_dana'] > 0 ? round(($tg['dana_terkumpul'] / $tg['target_dana']) * 100, 1) : 0;
+                    $persen    = $tg['target_dana'] > 0 ? round(($tg['dana_terkumpul'] / $tg['target_dana']) * 100, 1) : 0;
+                    $terkumpul = (float)$tg['dana_terkumpul'];
                 ?>
                     <div class="col-md-6">
                         <div class="card border-0 shadow-sm h-100">
@@ -549,8 +724,8 @@ renderHeader('Target Tabungan Keluarga', 'tabungan');
                                                 data-bs-target="#modalHapusTarget"
                                                 data-id="<?= (int)$tg['id'] ?>"
                                                 data-nama="<?= e($tg['nama_target']) ?>"
-                                                data-terkumpul="<?= (float)$tg['dana_terkumpul'] ?>"
-                                                data-terkumpul-rp="<?= e(rupiah($tg['dana_terkumpul'])) ?>">
+                                                data-terkumpul="<?= $terkumpul ?>"
+                                                data-terkumpul-rp="<?= e(rupiah($terkumpul)) ?>">
                                             <i class="bi bi-trash"></i>
                                         </button>
                                     </div>
@@ -561,7 +736,7 @@ renderHeader('Target Tabungan Keluarga', 'tabungan');
                                 </div>
 
                                 <div class="d-flex justify-content-between small mb-3">
-                                    <span>Terkumpul: <strong class="text-success"><?= rupiah($tg['dana_terkumpul']) ?></strong></span>
+                                    <span>Terkumpul: <strong class="text-success"><?= rupiah($terkumpul) ?></strong></span>
                                     <span>Target: <strong><?= rupiah($tg['target_dana']) ?></strong></span>
                                 </div>
 
@@ -587,7 +762,22 @@ renderHeader('Target Tabungan Keluarga', 'tabungan');
                                             <input type="text" name="keterangan" placeholder="Catatan (opsional)" class="form-control form-control-sm">
                                         </div>
                                     </div>
-                                    <button type="submit" class="btn btn-success btn-sm w-100">Alokasikan Dana</button>
+                                    <div class="d-flex gap-2">
+                                        <button type="submit" class="btn btn-success btn-sm flex-fill">
+                                            <i class="bi bi-plus-circle me-1"></i>Alokasikan
+                                        </button>
+                                        <button type="button"
+                                                class="btn btn-outline-warning text-dark btn-sm flex-fill"
+                                                data-bs-toggle="modal"
+                                                data-bs-target="#modalTarikDana"
+                                                data-id="<?= (int)$tg['id'] ?>"
+                                                data-nama="<?= e($tg['nama_target']) ?>"
+                                                data-terkumpul="<?= $terkumpul ?>"
+                                                data-terkumpul-rp="<?= e(rupiah($terkumpul)) ?>"
+                                                <?= $terkumpul <= 0 ? 'disabled' : '' ?>>
+                                            <i class="bi bi-box-arrow-up-right me-1"></i>Tarik Dana
+                                        </button>
+                                    </div>
                                 </form>
                             </div>
                         </div>
@@ -604,13 +794,13 @@ renderHeader('Target Tabungan Keluarga', 'tabungan');
             </div>
         <?php endif; ?>
 
-        <!-- Tabel Riwayat Tabungan yang Sudah Dialokasikan -->
+        <!-- Tabel Riwayat Alokasi & Penarikan Tabungan -->
         <div class="card border-0 shadow-sm">
             <div class="card-header bg-white py-3">
                 <div class="d-flex justify-content-between align-items-center mb-2">
-                    <span class="fw-bold">Riwayat Alokasi Tabungan</span>
+                    <span class="fw-bold">Riwayat Alokasi & Penarikan Tabungan</span>
                     <?php if ($isRiwayatFiltered): ?>
-                        <a href="<?= e(buildTabunganUrl($baseParams, ['target_id' => 0, 'dompet_id' => 0, 'bulan_riwayat' => '', 'page_riwayat' => 1])) ?>" class="btn btn-outline-secondary btn-sm">
+                        <a href="<?= e(buildTabunganUrl($baseParams, ['target_id' => 0, 'dompet_id' => 0, 'jenis_riwayat' => '', 'bulan_riwayat' => '', 'page_riwayat' => 1])) ?>" class="btn btn-outline-secondary btn-sm">
                             <i class="bi bi-arrow-counterclockwise me-1"></i>Reset Filter
                         </a>
                     <?php endif; ?>
@@ -620,9 +810,9 @@ renderHeader('Target Tabungan Keluarga', 'tabungan');
                     <input type="hidden" name="q_target" value="<?= e($qTarget) ?>">
                     <input type="hidden" name="page_target" value="<?= $pageTarget ?>">
 
-                    <div class="col-md-4">
+                    <div class="col-md-3">
                         <select name="target_id" class="form-select form-select-sm">
-                            <option value="0">Semua Target Tabungan</option>
+                            <option value="0">Semua Target</option>
                             <?php foreach ($allTargetsDropdown as $tgOpt): ?>
                                 <option value="<?= (int)$tgOpt['id'] ?>" <?= $filterTarget === (int)$tgOpt['id'] ? 'selected' : '' ?>>
                                     <?= e($tgOpt['nama_target']) ?>
@@ -640,7 +830,14 @@ renderHeader('Target Tabungan Keluarga', 'tabungan');
                             <?php endforeach; ?>
                         </select>
                     </div>
-                    <div class="col-md-3">
+                    <div class="col-md-2">
+                        <select name="jenis_riwayat" class="form-select form-select-sm">
+                            <option value="">Semua Jenis</option>
+                            <option value="setor" <?= $filterJenis === 'setor' ? 'selected' : '' ?>>Setor</option>
+                            <option value="tarik" <?= $filterJenis === 'tarik' ? 'selected' : '' ?>>Tarik</option>
+                        </select>
+                    </div>
+                    <div class="col-md-2">
                         <input type="month" name="bulan_riwayat" value="<?= e($bulanRiwayat) ?>" class="form-control form-control-sm" title="Filter Bulan">
                     </div>
                     <div class="col-md-2">
@@ -649,9 +846,12 @@ renderHeader('Target Tabungan Keluarga', 'tabungan');
                 </form>
             </div>
 
-            <div class="bg-light border-bottom px-3 py-2 d-flex justify-content-between align-items-center small">
-                <span class="text-muted">Ditemukan <strong><?= $totalRowsRiwayat ?></strong> catatan alokasi</span>
-                <span>Total Setoran: <strong class="text-success"><?= rupiah($totalSetorRiwayat) ?></strong></span>
+            <div class="bg-light border-bottom px-3 py-2 d-flex flex-wrap justify-content-between align-items-center gap-2 small">
+                <span class="text-muted">Ditemukan <strong><?= $totalRowsRiwayat ?></strong> catatan</span>
+                <div class="d-flex flex-wrap gap-3">
+                    <span>Total Setor: <strong class="text-success">+ <?= rupiah($totalSetorRiwayat) ?></strong></span>
+                    <span>Total Tarik: <strong class="text-danger">- <?= rupiah($totalTarikRiwayat) ?></strong></span>
+                </div>
             </div>
 
             <div class="table-responsive">
@@ -660,7 +860,7 @@ renderHeader('Target Tabungan Keluarga', 'tabungan');
                         <tr>
                             <th>Tanggal</th>
                             <th>Target & Catatan</th>
-                            <th>Sumber Dompet</th>
+                            <th>Dompet</th>
                             <th class="text-end">Nominal</th>
                             <th class="text-center" style="width: 110px;">Aksi</th>
                         </tr>
@@ -669,27 +869,42 @@ renderHeader('Target Tabungan Keluarga', 'tabungan');
                         <?php if (empty($riwayatSetoran)): ?>
                             <tr>
                                 <td colspan="5" class="text-center text-muted py-4">
-                                    <?= $isRiwayatFiltered ? 'Tidak ada riwayat alokasi yang cocok dengan filter.' : 'Belum ada riwayat alokasi tabungan yang tercatat.' ?>
+                                    <?= $isRiwayatFiltered ? 'Tidak ada riwayat tabungan yang cocok dengan filter.' : 'Belum ada riwayat alokasi atau penarikan tabungan yang tercatat.' ?>
                                 </td>
                             </tr>
                         <?php else: ?>
-                            <?php foreach ($riwayatSetoran as $rs): ?>
+                            <?php foreach ($riwayatSetoran as $rs):
+                                $isTarik = ($rs['jenis'] ?? 'setor') === 'tarik';
+                            ?>
                                 <tr>
                                     <td class="small"><?= e($rs['tanggal']) ?></td>
                                     <td>
-                                        <div class="fw-semibold"><?= e($rs['nama_target']) ?></div>
+                                        <div>
+                                            <?php if ($isTarik): ?>
+                                                <span class="badge bg-warning-subtle text-dark border border-warning-subtle me-1">Tarik</span>
+                                            <?php else: ?>
+                                                <span class="badge bg-success-subtle text-success border border-success-subtle me-1">Setor</span>
+                                            <?php endif; ?>
+                                            <span class="fw-semibold"><?= e($rs['nama_target']) ?></span>
+                                        </div>
                                         <div class="small text-muted"><?= e($rs['keterangan'] ?: '-') ?></div>
                                     </td>
-                                    <td class="small"><?= e($rs['nama_dompet'] ?? 'Dompet Dihapus') ?></td>
-                                    <td class="text-end fw-bold text-success"><?= rupiah($rs['nominal']) ?></td>
+                                    <td class="small">
+                                        <span class="text-muted"><?= $isTarik ? 'Ke: ' : 'Dari: ' ?></span>
+                                        <?= e($rs['nama_dompet'] ?? 'Dompet Dihapus') ?>
+                                    </td>
+                                    <td class="text-end fw-bold <?= $isTarik ? 'text-danger' : 'text-success' ?>">
+                                        <?= $isTarik ? '- ' : '+ ' ?><?= rupiah($rs['nominal']) ?>
+                                    </td>
                                     <td class="text-center">
                                         <div class="d-inline-flex gap-1">
                                             <button type="button"
                                                     class="btn btn-outline-primary btn-sm"
-                                                    title="Edit Alokasi Tabungan"
+                                                    title="Edit Riwayat Tabungan"
                                                     data-bs-toggle="modal"
                                                     data-bs-target="#modalEditSetoran"
                                                     data-id="<?= (int)$rs['id'] ?>"
+                                                    data-jenis="<?= e($rs['jenis'] ?? 'setor') ?>"
                                                     data-target="<?= e($rs['nama_target']) ?>"
                                                     data-dompet="<?= (int)($rs['dompet_id'] ?? 0) ?>"
                                                     data-nominal="<?= (float)$rs['nominal'] ?>"
@@ -697,11 +912,11 @@ renderHeader('Target Tabungan Keluarga', 'tabungan');
                                                     data-keterangan="<?= e($rs['keterangan'] ?? '') ?>">
                                                 <i class="bi bi-pencil"></i>
                                             </button>
-                                            <form method="POST" class="d-inline" onsubmit="return confirm('Hapus alokasi tabungan sebesar <?= e(rupiah($rs['nominal'])) ?>? Dana akan dikembalikan ke saldo dompet asal.');">
+                                            <form method="POST" class="d-inline" onsubmit="return confirm('Batalkan catatan <?= $isTarik ? 'penarikan' : 'alokasi' ?> sebesar <?= e(rupiah($rs['nominal'])) ?>? Saldo tabungan dan dompet akan disesuaikan kembali.');">
                                                 <?= csrfField() ?>
                                                 <input type="hidden" name="aksi" value="hapus_setoran">
                                                 <input type="hidden" name="setoran_id" value="<?= (int)$rs['id'] ?>">
-                                                <button type="submit" class="btn btn-outline-danger btn-sm" title="Hapus Alokasi Tabungan">
+                                                <button type="submit" class="btn btn-outline-danger btn-sm" title="Batalkan / Hapus Riwayat">
                                                     <i class="bi bi-trash"></i>
                                                 </button>
                                             </form>
@@ -726,7 +941,58 @@ renderHeader('Target Tabungan Keluarga', 'tabungan');
     </div>
 </div>
 
-<!-- Modal Edit Target Tabungan -->
+<!-- MODAL 1: TARIK DANA DARI TABUNGAN -->
+<div class="modal fade" id="modalTarikDana" tabindex="-1" aria-hidden="true">
+    <div class="modal-dialog modal-dialog-centered">
+        <div class="modal-content border-0 shadow">
+            <form method="POST">
+                <?= csrfField() ?>
+                <input type="hidden" name="aksi" value="tarik_dana">
+                <input type="hidden" name="target_id" id="tarikTargetId">
+                <div class="modal-header">
+                    <h5 class="modal-title fw-bold">Tarik Dana Tabungan</h5>
+                    <button type="button" class="btn-close" data-bs-dismiss="modal"></button>
+                </div>
+                <div class="modal-body">
+                    <div class="mb-3">
+                        <label class="form-label small fw-semibold">Pos Tabungan Asal</label>
+                        <input type="text" id="tarikTargetNama" class="form-control bg-light" readonly>
+                        <div class="form-text">Dana tersedia saat ini: <strong class="text-success" id="tarikSaldoTersediaRp"></strong></div>
+                    </div>
+                    <div class="mb-3">
+                        <label class="form-label small fw-semibold">Dompet Tujuan Penerima Dana</label>
+                        <select name="dompet_id" class="form-select" required>
+                            <?php foreach ($dompets as $d): ?>
+                                <option value="<?= (int)$d['id'] ?>"><?= e($d['nama_dompet']) ?> (<?= rupiah($d['saldo']) ?>)</option>
+                            <?php endforeach; ?>
+                        </select>
+                    </div>
+                    <div class="mb-3">
+                        <div class="d-flex justify-content-between align-items-center mb-1">
+                            <label class="form-label small fw-semibold mb-0">Nominal Penarikan (Rp)</label>
+                            <button type="button" id="btnTarikSemua" class="btn btn-link btn-sm p-0 text-decoration-none">Tarik Semua</button>
+                        </div>
+                        <input type="number" name="nominal" id="tarikNominal" min="1" step="1" class="form-control" placeholder="Masukkan jumlah yang ingin ditarik" required>
+                    </div>
+                    <div class="mb-3">
+                        <label class="form-label small fw-semibold">Tanggal Penarikan</label>
+                        <input type="date" name="tanggal" value="<?= date('Y-m-d') ?>" class="form-control" required>
+                    </div>
+                    <div class="mb-2">
+                        <label class="form-label small fw-semibold">Keperluan / Keterangan (Opsional)</label>
+                        <input type="text" name="keterangan" class="form-control" placeholder="Contoh: Keperluan mendadak / Pembayaran sekolah">
+                    </div>
+                </div>
+                <div class="modal-footer">
+                    <button type="button" class="btn btn-light" data-bs-dismiss="modal">Batal</button>
+                    <button type="submit" class="btn btn-warning">Proses Penarikan</button>
+                </div>
+            </form>
+        </div>
+    </div>
+</div>
+
+<!-- MODAL 2: EDIT TARGET TABUNGAN -->
 <div class="modal fade" id="modalEditTarget" tabindex="-1" aria-hidden="true">
     <div class="modal-dialog modal-dialog-centered">
         <div class="modal-content border-0 shadow">
@@ -761,7 +1027,7 @@ renderHeader('Target Tabungan Keluarga', 'tabungan');
     </div>
 </div>
 
-<!-- Modal Hapus Target Tabungan -->
+<!-- MODAL 3: HAPUS TARGET TABUNGAN -->
 <div class="modal fade" id="modalHapusTarget" tabindex="-1" aria-hidden="true">
     <div class="modal-dialog modal-dialog-centered">
         <div class="modal-content border-0 shadow">
@@ -796,7 +1062,7 @@ renderHeader('Target Tabungan Keluarga', 'tabungan');
     </div>
 </div>
 
-<!-- Modal Edit Alokasi Tabungan -->
+<!-- MODAL 4: EDIT RIWAYAT ALOKASI / PENARIKAN TABUNGAN -->
 <div class="modal fade" id="modalEditSetoran" tabindex="-1" aria-hidden="true">
     <div class="modal-dialog modal-dialog-centered">
         <div class="modal-content border-0 shadow">
@@ -805,7 +1071,7 @@ renderHeader('Target Tabungan Keluarga', 'tabungan');
                 <input type="hidden" name="aksi" value="edit_setoran">
                 <input type="hidden" name="setoran_id" id="editSetoranId">
                 <div class="modal-header">
-                    <h5 class="modal-title fw-bold">Edit Alokasi Tabungan</h5>
+                    <h5 class="modal-title fw-bold" id="editSetoranModalTitle">Edit Alokasi Tabungan</h5>
                     <button type="button" class="btn-close" data-bs-dismiss="modal"></button>
                 </div>
                 <div class="modal-body">
@@ -814,11 +1080,11 @@ renderHeader('Target Tabungan Keluarga', 'tabungan');
                         <input type="text" id="editSetoranTarget" class="form-control bg-light" readonly>
                     </div>
                     <div class="mb-3">
-                        <label class="form-label small fw-semibold">Tanggal Alokasi</label>
+                        <label class="form-label small fw-semibold">Tanggal</label>
                         <input type="date" name="tanggal" id="editSetoranTanggal" class="form-control" required>
                     </div>
                     <div class="mb-3">
-                        <label class="form-label small fw-semibold">Sumber Dompet</label>
+                        <label class="form-label small fw-semibold" id="editSetoranDompetLabel">Sumber Dompet</label>
                         <select name="dompet_id" id="editSetoranDompet" class="form-select" required>
                             <?php foreach ($dompets as $d): ?>
                                 <option value="<?= (int)$d['id'] ?>"><?= e($d['nama_dompet']) ?> (<?= rupiah($d['saldo']) ?>)</option>
@@ -827,7 +1093,7 @@ renderHeader('Target Tabungan Keluarga', 'tabungan');
                     </div>
                     <div class="mb-3">
                         <label class="form-label small fw-semibold">Nominal (Rp)</label>
-                        <input type="number" name="nominal" id="editSetoranNominal" min="1000" step="1" class="form-control" required>
+                        <input type="number" name="nominal" id="editSetoranNominal" min="1" step="1" class="form-control" required>
                     </div>
                     <div class="mb-2">
                         <label class="form-label small fw-semibold">Catatan (Opsional)</label>
@@ -845,6 +1111,35 @@ renderHeader('Target Tabungan Keluarga', 'tabungan');
 
 <script>
 document.addEventListener('DOMContentLoaded', function () {
+    // Modal Tarik Dana
+    let maxTarikTersedia = 0;
+    const modalTarikDana = document.getElementById('modalTarikDana');
+    const inputTarikNominal = document.getElementById('tarikNominal');
+    const btnTarikSemua = document.getElementById('btnTarikSemua');
+
+    if (modalTarikDana) {
+        modalTarikDana.addEventListener('show.bs.modal', function (event) {
+            const btn = event.relatedTarget;
+            maxTarikTersedia = parseFloat(btn.getAttribute('data-terkumpul') || '0');
+
+            document.getElementById('tarikTargetId').value = btn.getAttribute('data-id');
+            document.getElementById('tarikTargetNama').value = btn.getAttribute('data-nama');
+            document.getElementById('tarikSaldoTersediaRp').textContent = btn.getAttribute('data-terkumpul-rp');
+
+            inputTarikNominal.value = '';
+            inputTarikNominal.max = maxTarikTersedia;
+        });
+    }
+
+    if (btnTarikSemua && inputTarikNominal) {
+        btnTarikSemua.addEventListener('click', function () {
+            if (maxTarikTersedia > 0) {
+                inputTarikNominal.value = Math.floor(maxTarikTersedia);
+            }
+        });
+    }
+
+    // Modal Edit Target
     const modalEditTarget = document.getElementById('modalEditTarget');
     if (modalEditTarget) {
         modalEditTarget.addEventListener('show.bs.modal', function (event) {
@@ -856,6 +1151,7 @@ document.addEventListener('DOMContentLoaded', function () {
         });
     }
 
+    // Modal Hapus Target
     const modalHapusTarget = document.getElementById('modalHapusTarget');
     if (modalHapusTarget) {
         modalHapusTarget.addEventListener('show.bs.modal', function (event) {
@@ -871,10 +1167,16 @@ document.addEventListener('DOMContentLoaded', function () {
         });
     }
 
+    // Modal Edit Riwayat Alokasi / Penarikan
     const modalEditSetoran = document.getElementById('modalEditSetoran');
     if (modalEditSetoran) {
         modalEditSetoran.addEventListener('show.bs.modal', function (event) {
             const btn = event.relatedTarget;
+            const jenis = btn.getAttribute('data-jenis') || 'setor';
+            const isTarik = (jenis === 'tarik');
+
+            document.getElementById('editSetoranModalTitle').textContent = isTarik ? 'Edit Penarikan Tabungan' : 'Edit Alokasi Tabungan';
+            document.getElementById('editSetoranDompetLabel').textContent = isTarik ? 'Dompet Tujuan Penerima' : 'Sumber Dompet';
             document.getElementById('editSetoranId').value         = btn.getAttribute('data-id');
             document.getElementById('editSetoranTarget').value     = btn.getAttribute('data-target');
             document.getElementById('editSetoranTanggal').value    = btn.getAttribute('data-tanggal');
