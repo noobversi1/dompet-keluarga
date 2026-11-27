@@ -100,10 +100,11 @@ ob_start();
 </style>
 </head>
 <body>
+    <?php if (!file_exists(__DIR__ . '/vendor/autoload.php')): ?>
     <div class="no-print" style="margin-bottom:15px;">
         <button onclick="window.print()" style="padding:8px 14px; background:#0d6efd; color:#fff; border:none; border-radius:4px; cursor:pointer;">Cetak / Simpan sebagai PDF</button>
     </div>
-
+    <?php endif; ?>
     <h2>Laporan Keuangan Rumah Tangga</h2>
     <div class="meta">
         Akun: <strong><?= e($namaUser) ?></strong> |
@@ -286,7 +287,10 @@ $html = ob_get_clean();
 // Jika Dompdf terinstal melalui Composer, generate PDF biner langsung
 if (file_exists(__DIR__ . '/vendor/autoload.php')) {
     require_once __DIR__ . '/vendor/autoload.php';
-    $dompdf = new \Dompdf\Dompdf(['isRemoteEnabled' => false]);
+    $dompdf = new \Dompdf\Dompdf([
+        'isRemoteEnabled'  => false,
+        'defaultMediaType' => 'print',
+    ]);
     $dompdf->loadHtml($html);
     $dompdf->setPaper('A4', 'portrait');
     $dompdf->render();
