@@ -110,6 +110,20 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && !$isLocked) {
                         FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE
                     ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci
                 ",
+                'rencana_belanja' => "
+                    CREATE TABLE IF NOT EXISTS rencana_belanja (
+                        id INT AUTO_INCREMENT PRIMARY KEY,
+                        user_id INT NOT NULL,
+                        kategori_id INT NOT NULL,
+                        bulan CHAR(7) NOT NULL,
+                        nominal DECIMAL(15,2) NOT NULL,
+                        keterangan VARCHAR(255) NOT NULL,
+                        created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                        INDEX idx_user_bulan_kat (user_id, bulan, kategori_id),
+                        FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE,
+                        FOREIGN KEY (kategori_id) REFERENCES kategori(id) ON DELETE CASCADE
+                    ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci
+                ",
                 'budgeting' => "
                     CREATE TABLE IF NOT EXISTS budgeting (
                         id INT AUTO_INCREMENT PRIMARY KEY,
