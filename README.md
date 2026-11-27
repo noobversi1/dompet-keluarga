@@ -1,6 +1,6 @@
 # Dompet Keluarga
 
-**Dompet Keluarga** adalah aplikasi web pengelolaan keuangan rumah tangga berbasis **PHP 8+ (PDO)** dan **MySQL/MariaDB** dengan arsitektur **Pengguna Tunggal (*Single-User*)**(start_span)(end_span). Aplikasi ini dirancang untuk membantu keluarga memantau arus kas harian, mengatur batas anggaran bulanan (*budgeting*), mengelola target tabungan, mencatat portofolio investasi, serta mengekspor laporan keuangan dengan standar keamanan berlapis(start_span)(end_span)(start_span)(end_span).
+**Dompet Keluarga** adalah aplikasi web pengelolaan keuangan rumah tangga berbasis **PHP 8+ (PDO)** dan **MySQL/MariaDB** dengan arsitektur **Pengguna Tunggal (*Single-User*)**[span_2](start_span)[span_2](end_span). Aplikasi ini dirancang untuk membantu keluarga memantau arus kas harian, mengatur batas anggaran bulanan (*budgeting*), mengelola target tabungan, mencatat portofolio investasi, serta mengekspor laporan keuangan dengan standar keamanan berlapis[span_3](start_span)[span_3](end_span)[span_4](start_span)[span_4](end_span).
 
 ---
 
