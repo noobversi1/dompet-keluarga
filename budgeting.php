@@ -405,6 +405,31 @@ $stmtKat->bindValue($idx++, $offsetKat, PDO::PARAM_INT);
 $stmtKat->execute();
 $semuaKategori = $stmtKat->fetchAll();
 
+// Perbarui query $daftarBudget agar menyertakan kategori_id
+$daftarBudget = $pdo->prepare("
+    SELECT b.id, b.kategori_id, b.batas_anggaran, k.nama_kategori
+    FROM budgeting b
+    JOIN kategori k ON b.kategori_id = k.id
+    WHERE b.user_id = ? AND b.bulan = ?
+    ORDER BY k.nama_kategori ASC
+");
+$daftarBudget->execute([$userId, $bulan]);
+$daftarBudget = $daftarBudget->fetchAll();
+
+// Ambil rincian item rencana belanja per kategori pada bulan aktif
+$stmtRincian = $pdo->prepare('
+    SELECT kategori_id, keterangan, nominal
+    FROM rencana_belanja
+    WHERE user_id = ? AND bulan = ?
+    ORDER BY id ASC
+');
+$stmtRincian->execute([$userId, $bulan]);
+$rincianPerKategori = [];
+foreach ($stmtRincian->fetchAll() as $item) {
+    $rincianPerKategori[(int)$item['kategori_id']][] = $item;
+}
+
+
 renderHeader('Kategori, Dompet & Budgeting', 'budgeting');
 ?>
 <div class="row g-4">
@@ -523,11 +548,34 @@ renderHeader('Kategori, Dompet & Budgeting', 'budgeting');
                     </thead>
                     <tbody>
                         <?php if (empty($daftarBudget)): ?>
-                            <tr><td colspan="3" class="text-center text-muted py-3">Tidak ada data anggaran yang sesuai.</td></tr>
+                            <tr><td colspan="3" class="text-center text-muted py-3">Belum ada anggaran ditetapkan pada bulan ini.</td></tr>
                         <?php else: ?>
-                            <?php foreach ($daftarBudget as $b): ?>
+                            <?php foreach ($daftarBudget as $b):
+                                $items = $rincianPerKategori[(int)$b['kategori_id']] ?? [];
+                            ?>
                                 <tr>
-                                    <td><?= e($b['nama_kategori']) ?></td>
+                                    <td>
+                                        <div class="fw-semibold"><?= e($b['nama_kategori']) ?></div>
+                                        <?php if (!empty($items)): ?>
+                                            <ul class="list-unstyled mb-1 mt-1 small text-muted">
+                                                <?php foreach ($items as $it): ?>
+                                                    <li>
+                                                        <i class="bi bi-dot"></i><?= e($it['keterangan']) ?>
+                                                        <span class="text-dark">(<?= rupiah($it['nominal']) ?>)</span>
+                                                    </li>
+                                                <?php endforeach; ?>
+                                            </ul>
+                                            <a href="rencana_belanja.php?bulan=<?= urlencode($bulan) ?>&kategori_id=<?= (int)$b['kategori_id'] ?>"
+                                               class="badge bg-info-subtle text-info-emphasis text-decoration-none">
+                                                <i class="bi bi-list-check me-1"></i>Kelola <?= count($items) ?> Rencana Belanja
+                                            </a>
+                                        <?php else: ?>
+                                            <a href="rencana_belanja.php?bulan=<?= urlencode($bulan) ?>&kategori_id=<?= (int)$b['kategori_id'] ?>"
+                                               class="small text-decoration-none">
+                                                + Buat rincian rencana belanja
+                                            </a>
+                                        <?php endif; ?>
+                                    </td>
                                     <td class="text-end fw-bold"><?= rupiah($b['batas_anggaran']) ?></td>
                                     <td class="text-center">
                                         <div class="d-inline-flex gap-1">
@@ -555,6 +603,7 @@ renderHeader('Kategori, Dompet & Budgeting', 'budgeting');
                             <?php endforeach; ?>
                         <?php endif; ?>
                     </tbody>
+
                 </table>
             </div>
             <?php if ($totalPagesBudget > 1): ?>
