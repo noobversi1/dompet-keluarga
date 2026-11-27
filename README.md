@@ -83,7 +83,7 @@ dompet-keluarga/
 1. **Clone Repositori**
    ```bash
    git clone https://github.com/noobversi1/Dompet-Keluarga.git
-   cd dompet-keluarga
+   cd Dompet-Keluarga
    ```
 
 2. **Pindahkan ke Web Server**
