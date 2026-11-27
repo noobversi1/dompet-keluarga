@@ -7,24 +7,6 @@ require_once 'layout.php';
 
 $userId = requireLogin();
 
-// Otomatis buat tabel riwayat_tabungan jika belum ada di database
-$pdo->exec("
-    CREATE TABLE IF NOT EXISTS riwayat_tabungan (
-        id INT AUTO_INCREMENT PRIMARY KEY,
-        user_id INT NOT NULL,
-        target_id INT NOT NULL,
-        dompet_id INT NULL,
-        nominal DECIMAL(15,2) NOT NULL,
-        tanggal DATE NOT NULL,
-        keterangan VARCHAR(255) DEFAULT NULL,
-        created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-        INDEX idx_user_target (user_id, target_id),
-        FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE,
-        FOREIGN KEY (target_id) REFERENCES target_tabungan(id) ON DELETE CASCADE,
-        FOREIGN KEY (dompet_id) REFERENCES dompet(id) ON DELETE SET NULL
-    ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci
-");
-
 // Parameter Filter & Pagination Target Tabungan
 $statusTarget = in_array($_GET['status_target'] ?? '', ['berjalan', 'tercapai'], true) ? $_GET['status_target'] : '';
 $qTarget      = trim($_GET['q_target'] ?? '');
